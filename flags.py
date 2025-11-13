@@ -42,14 +42,17 @@ main_html = """
   function InitThis() {
       ctx = document.getElementById('myCanvas').getContext("2d");
 
+      ctx.fillStyle = "white";
+      ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
       var poligonos = ["bandera"];
-      var colores = ["rojo", "verde", "azul", "amarillo", "naranja"];
+      var colores = ["roja", "verde", "azul", "amarilla", "naranja"];
 
       poligono_random = poligonos[Math.floor(Math.random() * poligonos.length)];
       color_random = colores[Math.floor(Math.random() * colores.length)];
 
       var mensaje = poligono_random + " " + color_random;
-      document.getElementById('mensaje').innerHTML = 'Dibuja un ' + mensaje;
+      document.getElementById('mensaje').innerHTML = 'Dibuja una ' + mensaje;
 
       document.getElementById('poligono').value = poligono_random;
       document.getElementById('color').value = color_random;
