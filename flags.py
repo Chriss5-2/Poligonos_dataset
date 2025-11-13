@@ -175,7 +175,7 @@ def prepare_dataset():
         if not filelist:
             continue
         images_read = io.concatenate_images(io.imread_collection(filelist))
-        # images_read = images_read[:, :, :, :3]git ad
+        images_read = images_read[:, :, :, :3]
         labels_read = np.array([folder] * images_read.shape[0])
         images.append(images_read)
         labels.append(labels_read)
