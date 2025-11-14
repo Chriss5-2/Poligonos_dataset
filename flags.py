@@ -1,13 +1,38 @@
-import tempfile
-import os
+import base64
+import numpy as np
 from flask import Flask, request, redirect, send_file
 from skimage import io
-import base64
-import glob
-import numpy as np
-import random
+import io as io_bytes  # para manejar bytes de imágenes
+import psycopg2
 
 app = Flask(__name__)
+
+# ------------------ CONEXIÓN A RENDER POSTGRES ------------------
+conn_params = {
+    "host": "dpg-d4bbgqf5r7bs7392def0-a.oregon-postgres.render.com",
+    "database": "dataset_flags",
+    "user": "dataset_flags_user",
+    "password": "0lqRQBeVEvULYsxSsrfNu5ISPlFE14lc",
+    "port": 5432
+}
+
+# Crear tabla si no existe
+def init_db():
+    conn = psycopg2.connect(**conn_params)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS flags (
+            id SERIAL PRIMARY KEY,
+            poligono VARCHAR(50),
+            color VARCHAR(50),
+            img BYTEA
+        )
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
+
+init_db()
 
 main_html = """
 <html>
@@ -144,51 +169,69 @@ main_html = """
 
 @app.route("/")
 def main():
-    return(main_html)
+    return main_html
 
+# ------------------ SUBIDA DE IMAGEN ------------------
 @app.route('/upload', methods=['POST'])
 def upload():
     try:
-        img_data = request.form.get('myImage').replace("data:image/png;base64,","")
+        img_data = request.form.get('myImage').replace("data:image/png;base64,", "")
         poligono = request.form.get('poligono')
         color = request.form.get('color')
 
-        folder_name = f"{poligono}_{color}"
-        if not os.path.exists(folder_name):
-            os.mkdir(folder_name)
+        img_bytes = base64.b64decode(img_data)
 
-        with tempfile.NamedTemporaryFile(delete=False, mode="w+b", suffix='.png', dir=folder_name) as fh:
-            fh.write(base64.b64decode(img_data))
+        conn = psycopg2.connect(**conn_params)
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO flags (poligono, color, img) VALUES (%s, %s, %s)",
+            (poligono, color, psycopg2.Binary(img_bytes))
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
 
-        print(f"Imagen guardada en: {folder_name}")
-    except Exception as err:
-        print("Error al guardar la imagen:")
-        print(err)
+        print(f"Imagen guardada en la base de datos: {poligono}_{color}")
+
+    except Exception as e:
+        print("Error al guardar la imagen en DB:", e)
 
     return redirect("/", code=302)
 
+# ------------------ PREPARAR DATASET ------------------
 @app.route('/prepare', methods=['GET'])
 def prepare_dataset():
     images = []
     labels = []
-    folders = glob.glob('*_*')
 
-    for folder in folders:
-        filelist = glob.glob(f'{folder}/*.png')
-        if not filelist:
-            continue
-        images_read = io.concatenate_images(io.imread_collection(filelist))
-        images_read = images_read[:, :, :, :3]
-        labels_read = np.array([folder] * images_read.shape[0])
-        images.append(images_read)
-        labels.append(labels_read)
+    conn = psycopg2.connect(**conn_params)
+    cur = conn.cursor()
+    cur.execute("SELECT poligono, color, img FROM flags")
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
 
-    images = np.vstack(images)
-    labels = np.concatenate(labels)
-    np.save('X.npy', images)
-    np.save('y.npy', labels)
+    for poligono, color, img_bytes in rows:
+        # Leer imagen desde bytes
+        img = io.imread(io_bytes.BytesIO(img_bytes))
+        if img.shape[2] > 3:
+            img = img[:, :, :3]  # RGB
+        images.append(img)
+        labels.append(f"{poligono}_{color}")
+
+    if images:
+        images = np.stack(images)
+        labels = np.array(labels)
+        np.save('X.npy', images)
+        np.save('y.npy', labels)
+    else:
+        # Si no hay imágenes, guardar arrays vacíos
+        np.save('X.npy', np.empty((0, 200, 200, 3), dtype=np.uint8))
+        np.save('y.npy', np.array([]))
+
     return "OK!"
 
+# ------------------ DESCARGA ------------------
 @app.route('/X.npy', methods=['GET'])
 def download_X():
     return send_file('./X.npy')
