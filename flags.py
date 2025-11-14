@@ -238,6 +238,8 @@ def prepare_dataset():
                     # convertir bytes a imagen
                     from io import BytesIO
                     img = io.imread(BytesIO(file_data))
+                    if img.shape[-1]==4:
+                        img = img[:, :, :3]
                     label_images.append(img)
                 except Exception as e:
                     print(f"Error al descargar {file_name}: {e}")
