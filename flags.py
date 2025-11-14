@@ -210,23 +210,61 @@ def upload():
 def prepare_dataset():
     images = []
     labels = []
-    folders = glob.glob('*_*')
-
-    for folder in folders:
-        filelist = glob.glob(f'{folder}/*.png')
-        if not filelist:
-            continue
-        images_read = io.concatenate_images(io.imread_collection(filelist))
-        images_read = images_read[:, :, :, :3]
-        labels_read = np.array([folder] * images_read.shape[0])
-        images.append(images_read)
-        labels.append(labels_read)
-
-    images = np.vstack(images)
-    labels = np.concatenate(labels)
-    np.save('X.npy', images)
-    np.save('y.npy', labels)
-    return "OK!"
+    
+    try:
+        # listar todos los archivos en el bucket
+        files = supabase.storage.from_(BUCKET_NAME).list()
+        
+        # agrupar archivos por etiqueta (poligono_color)
+        files_by_label = {}
+        for file in files:
+            file_name = file['name']
+            # extraer etiqueta: "bandera_roja_uuid.png" → "bandera_roja"
+            label = '_'.join(file_name.split('_')[:-1])
+            
+            if label not in files_by_label:
+                files_by_label[label] = []
+            files_by_label[label].append(file_name)
+        
+        # procesar cada etiqueta
+        for label, file_names in files_by_label.items():
+            label_images = []
+            
+            for file_name in file_names:
+                try:
+                    # descargar archivo de Supabase
+                    file_data = supabase.storage.from_(BUCKET_NAME).download(file_name)
+                    
+                    # convertir bytes a imagen
+                    from io import BytesIO
+                    img = io.imread(BytesIO(file_data))
+                    label_images.append(img)
+                except Exception as e:
+                    print(f"Error al descargar {file_name}: {e}")
+                    continue
+            
+            if label_images:
+                # apilar imágenes de esta etiqueta
+                images_array = np.array(label_images)
+                labels_array = np.array([label] * len(label_images))
+                
+                images.append(images_array)
+                labels.append(labels_array)
+        
+        # combinar todas las imágenes y etiquetas
+        if images:
+            images = np.vstack(images)
+            labels = np.concatenate(labels)
+            np.save('X.npy', images)
+            np.save('y.npy', labels)
+            return f"OK! {len(images)} imágenes procesadas"
+        else:
+            return "No se encontraron imágenes"
+    
+    except Exception as err:
+        print("Error al preparar dataset:")
+        print(err)
+        return f"Error: {err}"
 
 @app.route('/X.npy', methods=['GET'])
 def download_X():
