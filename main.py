@@ -1,11 +1,24 @@
 import tempfile
 import os
+from dotenv import load_dotenv
 from flask import Flask, request, redirect, send_file
 from skimage import io
 import base64
 import glob
 import numpy as np
 import random
+import unicodedata
+
+from supabase import create_client, Client
+import uuid
+
+load_dotenv()
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+BUCKET_NAME = "pc3_dataset" 
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = Flask(__name__)
 
@@ -139,6 +152,12 @@ main_html = """
 </html>
 """
 
+def normalize_filename(text):
+    """Remueve acentos y caracteres especiales del texto"""
+    text = unicodedata.normalize('NFKD', text)
+    text = text.encode('ascii', 'ignore').decode('ascii')
+    return text
+
 @app.route("/")
 def main():
     return(main_html)
@@ -146,20 +165,40 @@ def main():
 @app.route('/upload', methods=['POST'])
 def upload():
     try:
-        img_data = request.form.get('myImage').replace("data:image/png;base64,","")
+        # obtener base64 y limpiar el encabezado
+        img_data = request.form.get('myImage').replace("data:image/png;base64,", "")
+
         poligono = request.form.get('poligono')
         color = request.form.get('color')
 
-        folder_name = f"{poligono}_{color}"
-        if not os.path.exists(folder_name):
-            os.mkdir(folder_name)
+        # normalizar nombre (remover acentos)
+        poligono_clean = normalize_filename(poligono)
+        color_clean = normalize_filename(color)
 
-        with tempfile.NamedTemporaryFile(delete=False, mode="w+b", suffix='.png', dir=folder_name) as fh:
-            fh.write(base64.b64decode(img_data))
+        # generar nombre único
+        file_name = f"{poligono_clean}_{color_clean}_{uuid.uuid4()}.png"
 
-        print(f"Imagen guardada en: {folder_name}")
+        # convertir base64 → bytes
+        file_bytes = base64.b64decode(img_data)
+
+        # subir a Supabase
+        res = supabase.storage.from_(BUCKET_NAME).upload(
+            file_name,
+            file_bytes,
+            file_options={"content-type": "image/png"}
+        )
+
+        # manejar respuesta de Supabase
+        if hasattr(res, 'error') and res.error:
+            print("Error al subir a Supabase:", res.error)
+        else:
+            print("Imagen subida correctamente:", file_name)
+            # obtener URL pública
+            public_url = supabase.storage.from_(BUCKET_NAME).get_public_url(file_name)
+            print("URL pública:", public_url)
+
     except Exception as err:
-        print("Error al guardar la imagen:")
+        print("Error al subir la imagen:")
         print(err)
 
     return redirect("/", code=302)
@@ -195,4 +234,5 @@ def download_y():
     return send_file('./y.npy')
 
 if __name__ == "__main__":
+    app.run()
     app.run()
